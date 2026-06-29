@@ -90,6 +90,16 @@ class BaseOptions(BaseModel):
     kind: ClassVar[str]
 
 
+class OcrRegionsMode(str, Enum):
+    r"""
+    How the document regions fed into the OCR model are generated
+    """
+
+    LAYOUT_ONLY = "layout_only"
+    PDF_ONLY = "pdf_only"
+    LAYOUT_AND_PDF = "layout_and_pdf"
+
+
 class TableFormerMode(str, Enum):
     """Operating modes for TableFormer table structure extraction model.
 
@@ -196,6 +206,17 @@ class OcrOptions(BaseOptions):
             examples=[0.05, 0.1],
         ),
     ] = 0.05
+    document_regions_mode: Annotated[
+        OcrRegionsMode,
+        Field(
+            description="Which document regions to feed as input to the OCR",
+            examples=[
+                OcrRegionsMode.LAYOUT_ONLY,
+                OcrRegionsMode.PDF_ONLY,
+                OcrRegionsMode.LAYOUT_AND_PDF,
+            ],
+        ),
+    ] = OcrRegionsMode.LAYOUT_AND_PDF
 
 
 class OcrAutoOptions(OcrOptions):

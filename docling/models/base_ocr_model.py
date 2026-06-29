@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Type
 
 import numpy as np
-from docling_core.types.doc import BoundingBox, CoordOrigin
+from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel
 from docling_core.types.doc.page import TextCell
 from PIL import Image, ImageDraw
 from rtree import index
@@ -22,6 +22,12 @@ _log = logging.getLogger(__name__)
 
 
 class BaseOcrModel(BasePageModel, BaseModelWithOptions):
+    OCR_CLUSTER_LABELS = [
+        DocItemLabel.CHART,
+        DocItemLabel.PICTURE,
+        DocItemLabel.HANDWRITTEN_TEXT,
+    ]
+
     def __init__(
         self,
         *,
@@ -36,8 +42,42 @@ class BaseOcrModel(BasePageModel, BaseModelWithOptions):
         self.enabled = enabled
         self.options = options
 
-    # Computes the optimum amount and coordinates of rectangles to OCR on a given page
     def get_ocr_rects(self, page: Page) -> List[BoundingBox]:
+        r""" """
+        # Naive alrogithm that takes all detected pictures giving priority to layout then to PDF
+        ocr_bboxes: List[BoundingBox] = self._get_cluster_ocr_rects(page)
+        if len(ocr_bboxes) == 0:
+            ocr_bboxes: List[BoundingBox] = self._get_pdf_ocr_rects(page)
+
+        # TODO: Open topics:
+        # - How to avoid OCRing pictures without text? Fast classification if the picture has text or not?
+        # - Introduce control option on how the ocr rects are computed:
+        #   - layout-only (L)
+        #   - pdf-only (P)
+        #   - L U (P / L)
+        #   - Reject bboxes where the same pixel color dominates (too much background)
+
+        return ocr_bboxes
+
+    def _get_cluster_ocr_rects(self, page: Page) -> List[BoundingBox]:
+        r"""
+        Compute OCR rectangles from the layout clusters of a page.
+
+        Clusters labeled as charts, pictures, or handwritten text are turned into
+        OCR regions, using the cluster bounding box directly. Returns an empty list
+        if the page has no layout prediction yet.
+        """
+        if page.predictions.layout is None:
+            return []
+
+        cluster_bboxes = [
+            cluster.bbox
+            for cluster in page.predictions.layout.clusters
+            if cluster.label in self.OCR_CLUSTER_LABELS
+        ]
+        return cluster_bboxes
+
+    def _get_pdf_ocr_rects(self, page: Page) -> List[BoundingBox]:
         r"""
         Compute the rectangles that should be OCRed on a given page.
 
@@ -78,6 +118,22 @@ class BaseOcrModel(BasePageModel, BaseModelWithOptions):
                 x0, y0, x1, y1 = rect.as_tuple()
                 x0, y0, x1, y1 = round(x0), round(y0), round(x1), round(y1)
                 draw.rectangle([(x0, y0), (x1, y1)], fill=1)
+
+            #######################################################################################
+            # Debug: Dump the image as a file
+            # enable `pipeline_options.do_ocr = True` in tests/test_e2e_conversion.py
+            # from datetime import datetime
+
+            # viz_root = Path(
+            #     "/Users/nli/docling/ocr_layout_pipelines_refactoring/viz_ocr_rect/"
+            # )
+            # tmp_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            # tmp_fn = viz_root / tmp_filename
+            # image.save(
+            #     str(tmp_fn),
+            #     format="png",
+            # )
+            #######################################################################################
 
             np_image = np.array(image)
 
@@ -220,6 +276,8 @@ class BaseOcrModel(BasePageModel, BaseModelWithOptions):
         return combined
 
     def draw_ocr_rects_and_cells(self, conv_res, page, ocr_rects, show: bool = False):
+        # ToDecide: If we want to have all drawing functions in docling/utils/visualization.py
+        #           or even inside docling-core
         image = copy.deepcopy(page.image)
         scale_x = image.width / page.size.width
         scale_y = image.height / page.size.height
